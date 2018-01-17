@@ -1,0 +1,39 @@
+$port = Port::where('evse_id', $evse->id)->orderBy('port_number', 'asc')->get();
+
+ //这里当作双枪来处理
+            foreach ($port as $k=>$v){
+
+                //枪口状态在启动中,停止中,再最大等待时间内,不进行操作
+                $lastOperatorTime = empty($v->last_operator_time) ? 0 : $v->last_operator_time;
+                $portInfoChargeStatus = $v->work_status;
+                $passedTime = time()-strtotime($lastOperatorTime);
+
+                if( (1 == $portInfoChargeStatus || 2 == $portInfoChargeStatus  || 4 == $portInfoChargeStatus || 3 == $portInfoChargeStatus || 5 == $portInfoChargeStatus)  &&  $passedTime < Protocol::MAX_TIMEOUT + 20){
+                    Log::debug( __NAMESPACE__ ."/".__CLASS__. "/" . __FUNCTION__ . "@" . __LINE__ . " 启动，停止期间，不进行操作");
+                    continue;
+                }
+
+
+
+                $port = $k == 0 ? $astatus : $k == 1 ? $bstatus : false;
+                Log::debug( __NAMESPACE__ ."/".__CLASS__. "/" . __FUNCTION__ . "@" . __LINE__ . " 数据:k:$k, astatus:$astatus, port:$port ");
+
+                $monitor_code = $v->monitor_evse_code;
+                //充电枪口状态
+                $workStatus = 2 == $port ? MonitorServer::WORK_STATUS_CHARGING : 0 == $port ?
+                    MonitorServer::WORK_STATUS_FREE : 1 == $port ?
+                        MonitorServer::WORK_STATUS_FAILURE : 3 == $port ?
+                            MonitorServer::WORK_STATUS_FREE : 4 == $port ?
+                                MonitorServer::WORK_STATUS_RESERVED : MonitorServer::WORK_STATUS_FREE;
+
+                //$workStatus = 3 == $port ? MonitorServer::WORK_STATUS_FREE : 4 == $port ? MonitorServer::WORK_STATUS_RESERVED : $workStatus;
+                $updateResponse = MonitorServer::updateEvseStatus($monitor_code,TRUE,$workStatus,TRUE);
+
+                Log::debug( __NAMESPACE__ .  "/" . __CLASS__."/" . __FUNCTION__ . "@" . __LINE__ . " 桩运行状态实时上传,调用monitor结果 $updateResponse");
+
+                //更新枪口状态
+                $v->work_status = $port == 2 ? $port : 0; //充电状态
+                $v->port_status = $port == 1 ? $port : 0; //枪口状态 0/正常 1/故障
+                $v->save();
+
+            }
